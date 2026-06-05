@@ -11,6 +11,10 @@ const BotSettings = require('./models/BotSettings');
 const authRoutes = require('./routes/auth'); 
 
 dotenv.config();
+
+// DEBUG: Verify if API Key is loaded
+console.log("Checking API Key:", process.env.GEMINI_API_KEY ? "✅ Loaded" : "❌ MISSING");
+
 const app = express();
 
 const storage = multer.diskStorage({
@@ -22,8 +26,9 @@ const upload = multer({ storage });
 app.use(cors());
 app.use(express.json());
 
+// Initialize Gemini with the correct model ID
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" }); // Verified model name
+const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash" });
 
 const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) {
@@ -37,7 +42,7 @@ mongoose.connect(process.env.MONGODB_URI)
 
 app.use('/api/auth', authRoutes);
 
-// 1. Bot Settings: Fetch
+// --- Bot Settings Routes (Same as before) ---
 app.get('/api/bot-settings/:userId', async (req, res) => {
     try {
         const settings = await BotSettings.findOne({ userId: req.params.userId });
@@ -45,7 +50,6 @@ app.get('/api/bot-settings/:userId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: 'Server error' }); }
 });
 
-// 2. Bot Settings: Update (Text fields)
 app.put('/api/bot-settings', async (req, res) => {
     try {
         const { userId, name, description, language } = req.body;
@@ -54,7 +58,6 @@ app.put('/api/bot-settings', async (req, res) => {
     } catch (err) { res.status(500).json({ error: 'Save failed' }); }
 });
 
-// 3. Bot Settings: Upload Avatar
 app.post('/api/bot-settings/avatar', upload.single('avatar'), async (req, res) => {
     try {
         const { userId } = req.body;
@@ -64,7 +67,7 @@ app.post('/api/bot-settings/avatar', upload.single('avatar'), async (req, res) =
     } catch (err) { res.status(500).json({ error: 'Upload failed' }); }
 });
 
-// 4. Recent Chats: Fetch by User
+// --- Chat Routes (Same as before) ---
 app.get('/api/recent-chats/:userId', async (req, res) => {
     try {
         const chats = await Chat.find({ user: req.params.userId }).sort({ updatedAt: -1 });
@@ -72,7 +75,6 @@ app.get('/api/recent-chats/:userId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: 'History fetch failed' }); }
 });
 
-// Fetch specific chat details by ID
 app.get('/api/recent-chats/details/:chatId', async (req, res) => {
     try {
         const chat = await Chat.findById(req.params.chatId);
@@ -81,7 +83,6 @@ app.get('/api/recent-chats/details/:chatId', async (req, res) => {
     } catch (err) { res.status(500).json({ error: 'Failed to fetch chat details' }); }
 });
 
-// 5. Initialize Chat Session
 app.post('/api/chats', async (req, res) => {
   const { userId } = req.body;
   try {
@@ -97,25 +98,25 @@ app.post('/api/chats', async (req, res) => {
   }
 });
 
-// 6. Gemini AI Chat
+// --- Gemini AI Chat (Updated for better reliability) ---
 app.post('/api/chat', async (req, res) => {
   const { message, chatId } = req.body;
+  if (!message) return res.status(400).json({ error: "No message provided" });
+
   try {
       const result = await model.generateContent(message);
-      const reply = result.response.text();
+      const reply = await result.response.text();
 
       if (chatId) {
-        const updatedChat = await Chat.findByIdAndUpdate(chatId, {
+        await Chat.findByIdAndUpdate(chatId, {
             $push: { messages: { $each: [{ sender: 'user', text: message }, { sender: 'bot', text: reply }] } },
             snippet: message.substring(0, 30),
             updatedAt: new Date()
-        }, { new: true });
-        
-        if (!updatedChat) return res.status(404).json({ error: "Chat session not found" });
+        });
       }
       res.json({ reply });
   } catch (error) {
-      console.error("AI Error:", error);
+      console.error("AI Engine Error:", error);
       res.status(500).json({ error: 'Failed to communicate with AI Engine' });
   }
 });
